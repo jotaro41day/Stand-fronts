@@ -10,20 +10,26 @@ const gradient = new THREE.DataTexture(steps, 4, 1, THREE.RGBAFormat);
 gradient.minFilter = THREE.NearestFilter;
 gradient.magFilter = THREE.NearestFilter;
 gradient.needsUpdate = true;
+const outlineMaterial = new THREE.MeshBasicMaterial({ color: 0x1b1232,
+  side: THREE.BackSide });
 
 export function toon(color, options = {}) {
   return new THREE.MeshToonMaterial({ color, gradientMap: gradient, ...options });
 }
 
+const sharedMaterials = new Map();
+export function sharedToon(color) {
+  if (!sharedMaterials.has(color)) sharedMaterials.set(color, toon(color));
+  return sharedMaterials.get(color);
+}
+
 export function outlinedMesh(geometry, color, options = {}) {
   const mesh = new THREE.Mesh(geometry, toon(color, options));
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
-  const outline = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
-    color: 0x1b1232,
-    side: THREE.BackSide,
-  }));
+  mesh.castShadow = false;
+  mesh.receiveShadow = false;
+  const outline = new THREE.Mesh(geometry, outlineMaterial);
   outline.scale.setScalar(1.075);
+  outline.userData.isOutline = true;
   mesh.add(outline);
   return mesh;
 }
@@ -44,12 +50,8 @@ export function addOutlineToModel(mesh) {
     transparent: original?.transparent ?? false,
     opacity: original?.opacity ?? 1,
   });
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
-  const outlineMaterial = new THREE.MeshBasicMaterial({
-    color: 0x1b1232,
-    side: THREE.BackSide,
-  });
+  mesh.castShadow = false;
+  mesh.receiveShadow = false;
   let outline;
   if (mesh.isSkinnedMesh) {
     const geometry = mesh.geometry.clone();
@@ -67,10 +69,16 @@ export function addOutlineToModel(mesh) {
     }
     outline = new THREE.SkinnedMesh(geometry, outlineMaterial);
     outline.bind(mesh.skeleton, mesh.bindMatrix);
-    outline.frustumCulled = false;
+    geometry.computeBoundingSphere();
+    if (geometry.boundingSphere) geometry.boundingSphere.radius *= 1.5;
+    mesh.geometry.computeBoundingSphere();
+    if (mesh.geometry.boundingSphere) mesh.geometry.boundingSphere.radius *= 1.5;
+    mesh.frustumCulled = true;
+    outline.frustumCulled = true;
   } else {
     outline = new THREE.Mesh(mesh.geometry, outlineMaterial);
     outline.scale.setScalar(1.055);
   }
+  outline.userData.isOutline = true;
   mesh.add(outline);
 }

@@ -32,8 +32,12 @@ import { blastTargets, bombLanding, createTank, damageTank, findTankHit,
   stepTank } from './kiraCombat.js';
 import { createPlantedBombVisual, createTankVisual, updateBombVisual,
   updateTankVisual } from '../visual/kiraVisuals.js';
+import { AdaptivePixelRatio, FrameStats, chooseQuality, clampPixelRatio } from
+  '../performance/performanceSettings.js';
+import { PerformancePanel } from '../performance/PerformancePanel.js';
 
 const beamGeometry = new THREE.CylinderGeometry(.45, .75, 3.2, 10, 1, true);
+const teams = ['blue', 'red'];
 const setTextIfChanged = (element, value) => {
   if (element.textContent !== value) element.textContent = value;
 };
@@ -61,29 +65,32 @@ export class GemGame {
     this.scene.background = new THREE.Color(0x171329);
     this.camera = new THREE.OrthographicCamera(-8, 8, 5, -5, .1, 100);
     this.cameraFocus = new THREE.Vector3(0, 0, 0);
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.25;
-    this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFShadowMap;
-    this.renderer.domElement.setAttribute('aria-label', 'Arena 3D de Pique-Gema');
-    this.container.appendChild(this.renderer.domElement);
+    this.adaptiveRatio = new AdaptivePixelRatio();
+    this.currentPixelRatio = 1;
+    this.frameStats = new FrameStats();
+    this.lastMetricsAt = 0;
+    this.lastRenderedAt = 0;
+    this.autoQualityAt = performance.now() + 4000;
+    this.autoQualityChosen = false;
+    this.autoQualityReviewAt = 0;
+    this.renderer = this.createRenderer(true);
 
     this.scene.add(new THREE.HemisphereLight(0xb7a8ff, 0x453158, 2.2));
     const sun = new THREE.DirectionalLight(0xffe5b5, 3.0);
     sun.position.set(-7, 15, 8);
     sun.castShadow = true;
-    this.highShadowSize = window.innerWidth < 650 ? 512 : 1024;
+    this.highShadowSize = 512;
     sun.shadow.mapSize.set(this.highShadowSize, this.highShadowSize);
-    sun.shadow.camera.left = -19;
-    sun.shadow.camera.right = 19;
-    sun.shadow.camera.top = 13;
-    sun.shadow.camera.bottom = -13;
+    sun.shadow.camera.left = -4;
+    sun.shadow.camera.right = 4;
+    sun.shadow.camera.top = 4;
+    sun.shadow.camera.bottom = -4;
+    sun.shadow.camera.near = .1;
+    sun.shadow.camera.far = 30;
     sun.shadow.normalBias = .025;
     sun.shadow.radius = 3;
     this.scene.add(sun);
+    this.scene.add(sun.target);
     this.sun = sun;
 
     createGemArena(this.scene);
@@ -93,6 +100,10 @@ export class GemGame {
     this.characterId = this.playerActor.characterId;
     this.viewTeam = this.playerActor.team;
     this.player = new Player(this.scene, this.characterId);
+    this.player.heroRoot.traverse(object => {
+      if (object.isMesh && !object.userData.isOutline) object.castShadow = true;
+    });
+    this.player.onModelLoaded = () => this.updateOutlineVisibility();
     this.playerActor.ammo = this.player.ammo;
     this.player.x = this.playerActor.x;
     this.player.y = this.playerActor.y;
@@ -116,6 +127,7 @@ export class GemGame {
       .map(actor => [actor.id, createFighterVisual(this.scene, actor)]));
     for (const actor of this.match.actors.filter(fighter => fighter !== this.playerActor)) {
       loadFighterModels(this.scene, this.botVisuals.get(actor.id), actor)
+        .then(() => this.updateOutlineVisibility())
         .catch(error => console.warn(`Falha ao carregar bot ${actor.id}:`, error));
     }
     this.gemVisuals = new Map();
@@ -146,6 +158,8 @@ export class GemGame {
     this.strongHitCount = 0;
     this.endShown = false;
     this.scoreShown = { blue: 0, red: 0 };
+    this.hudScores = { blue: 0, red: 0 };
+    this.lastHudAt = 0;
     this.flyGems = Array.from({ length: 8 }, () => {
       const element = document.createElement('div');
       element.className = 'flying-gem';
@@ -154,7 +168,15 @@ export class GemGame {
       return { element, active: false };
     });
     this.qualitySelect = document.getElementById('quality');
-    this.qualitySelect.addEventListener('change', () => this.setRenderQuality(this.qualitySelect.value));
+    this.performancePanel = new PerformancePanel(() => this.applyPerformanceSettings());
+    this.performancePanel.botSlots = this.bots.size;
+    if (this.performancePanel.quality) this.qualitySelect.value = this.performancePanel.quality;
+    this.qualitySelect.addEventListener('change', () => {
+      this.performancePanel.quality = this.qualitySelect.value;
+      this.performancePanel.overrides = {};
+      this.performancePanel.save();
+      this.setRenderQuality(this.qualitySelect.value);
+    });
     this.controls = new TouchControls();
     this.mouseControls = new MouseControls(this.renderer.domElement);
     this.aimIndicator = createAimIndicator();
@@ -175,6 +197,17 @@ export class GemGame {
       return fill;
     });
     this.currentAmmoFractions = Array(AMMO_CAPACITY).fill(1);
+    this.keyboardDirection = { x: 0, y: 0 };
+    this.attackQueue = [];
+    this.worldScratch = { x: 0, z: 0 };
+    this.standScratch = { x: 0, z: 0 };
+    this.aimScratch = { x: 0, y: 0 };
+    this.ndc = new THREE.Vector2();
+    this.wasAlive = new Map();
+    this.gemsBefore = new Map();
+    this.heldBefore = new Map();
+    this.gains = new Map();
+    this.liveGemIds = new Set();
     this.keys = new Set();
     this.keyboardAttacks = 0;
     this.keyboardSupers = [];
@@ -214,7 +247,7 @@ export class GemGame {
     window.addEventListener('keyup', event => {
       if (event.code === 'KeyE' && this.keyEShotArmed)
         this.keyboardSupers.push({ type: 'aim', direction:
-          this.aimDirectionFromScreen(this.mouseControls.mouseScreen) ?? this.player.aim });
+          { ...(this.aimDirectionFromScreen(this.mouseControls.mouseScreen) ?? this.player.aim) } });
       if (event.code === 'KeyE') this.keyEShotArmed = false;
       this.keys.delete(event.code);
     });
@@ -267,12 +300,50 @@ export class GemGame {
     requestAnimationFrame(this.frame);
   }
 
+  createRenderer(antialias) {
+    const renderer = new THREE.WebGLRenderer({ antialias, powerPreference: 'high-performance' });
+    renderer.setPixelRatio(this.currentPixelRatio);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.25;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
+    renderer.info.autoReset = false;
+    renderer.domElement.setAttribute('aria-label', 'Arena 3D de Pique-Gema');
+    this.container.appendChild(renderer.domElement);
+    this.requestedAntialias = antialias;
+    return renderer;
+  }
+
+  replaceRenderer(antialias) {
+    const old = this.renderer;
+    let replacement;
+    try { replacement = this.createRenderer(antialias); }
+    catch (error) {
+      console.warn('Não foi possível trocar o antialias neste aparelho:', error);
+      return false;
+    }
+    this.composer?.dispose();
+    this.composer = null;
+    this.bloomPass = null;
+    old.dispose();
+    old.forceContextLoss();
+    old.domElement.remove();
+    this.renderer = replacement;
+    this.mouseControls.attachCanvas(this.renderer.domElement);
+    return true;
+  }
+
   resize() {
     const width = this.container.clientWidth || window.innerWidth;
     const height = this.container.clientHeight || window.innerHeight;
-    const pixelRatio = Math.min(window.devicePixelRatio, 2);
-    this.renderer.setPixelRatio(pixelRatio);
-    this.composer?.setPixelRatio(pixelRatio);
+    const pixelRatio = this.performanceSettings?.resolutionScale === undefined
+      ? this.adaptiveRatio.value : clampPixelRatio(this.performanceSettings.resolutionScale);
+    const ratioChanged = pixelRatio !== this.currentPixelRatio;
+    this.currentPixelRatio = pixelRatio;
+    if (ratioChanged) {
+      this.renderer.setPixelRatio(pixelRatio);
+      this.composer?.setPixelRatio(pixelRatio);
+    }
     const ratio = width / height;
     const viewWidth = Math.max(10.2, ratio * 12.5);
     const viewHeight = viewWidth / ratio;
@@ -283,66 +354,150 @@ export class GemGame {
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height);
     this.composer?.setSize(width, height);
+    this.canvasRect = this.renderer.domElement.getBoundingClientRect();
     this.updateCamera(true);
   }
 
   setRenderQuality(level) {
     this.renderQuality = ['high', 'medium', 'low'].includes(level) ? level : 'medium';
     this.effects.setQuality(this.renderQuality);
-    const shadows = this.renderQuality !== 'low';
-    this.sun.castShadow = shadows;
-    this.renderer.shadowMap.enabled = shadows;
-    const shadowSize = this.renderQuality === 'high' ? this.highShadowSize : 512;
+    this.applyPerformanceSettings();
+  }
+
+  updateOutlineVisibility() {
+    const visible = this.performanceSettings?.outline ?? true;
+    this.scene.traverse(object => {
+      if (object.userData.isOutline) object.visible = visible;
+    });
+  }
+
+  applyPerformanceSettings() {
+    const settings = this.performancePanel.refresh(this.renderQuality);
+    this.performanceSettings = settings;
+    this.effects.setEnabled(settings.particles);
+    this.activeBotCount = Math.min(this.bots.size, Math.max(0,
+      Math.round(Number(settings.botCount ?? this.bots.size))));
+    if (this.requestedAntialias !== !!settings.antialias &&
+        !this.replaceRenderer(!!settings.antialias)) {
+      settings.antialias = this.requestedAntialias;
+      this.performancePanel.overrides.antialias = this.requestedAntialias;
+      this.performancePanel.refresh(this.renderQuality);
+      this.performancePanel.save();
+    }
+    this.sun.castShadow = !!settings.shadows;
+    this.renderer.shadowMap.enabled = !!settings.shadows;
+    const shadowSize = this.renderQuality === 'high' ? this.highShadowSize : 256;
     if (this.sun.shadow.mapSize.x !== shadowSize) {
       this.sun.shadow.map?.dispose();
       this.sun.shadow.map = null;
       this.sun.shadow.mapSize.set(shadowSize, shadowSize);
     }
-    if (shadows) this.renderer.shadowMap.needsUpdate = true;
-    if (this.renderQuality === 'high' && !this.composer) {
+    if (settings.shadows) this.renderer.shadowMap.needsUpdate = true;
+    this.updateOutlineVisibility();
+    if (settings.postprocess && !this.composer) {
       this.composer = new EffectComposer(this.renderer);
       this.composer.addPass(new RenderPass(this.scene, this.camera));
       this.bloomPass = new UnrealBloomPass(new THREE.Vector2(256, 256), .34, .2, .9);
       this.composer.addPass(this.bloomPass);
       this.composer.addPass(new OutputPass());
-      this.composer.setPixelRatio(this.renderer.getPixelRatio());
-      this.composer.setSize(this.container.clientWidth || window.innerWidth,
-        this.container.clientHeight || window.innerHeight);
+    } else if (!settings.postprocess && this.composer) {
+      this.composer.dispose();
+      this.composer = null;
+      this.bloomPass = null;
     }
+    if (this.bloomPass) this.bloomPass.enabled = !!settings.bloom;
+    this.resize();
   }
 
   renderScene() {
-    if (this.renderQuality === 'high') this.composer.render();
+    this.renderer.info?.reset();
+    if (this.performanceSettings?.postprocess ?? this.renderQuality === 'high') this.composer.render();
     else this.renderer.render(this.scene, this.camera);
   }
 
   updateCamera(immediate = false) {
-    const at = toWorld(this.player.x, this.player.y);
-    const desired = new THREE.Vector3(at.x, 0, at.z);
-    if (immediate) this.cameraFocus.copy(desired);
-    else this.cameraFocus.lerp(desired, .13);
+    const at = toWorld(this.player.x, this.player.y, this.worldScratch);
+    if (immediate) this.cameraFocus.set(at.x, 0, at.z);
+    else {
+      this.cameraFocus.x += (at.x - this.cameraFocus.x) * .13;
+      this.cameraFocus.z += (at.z - this.cameraFocus.z) * .13;
+    }
     this.camera.position.set(this.cameraFocus.x, 18, this.cameraFocus.z + 10);
     this.camera.lookAt(this.cameraFocus);
     this.camera.updateMatrixWorld();
+    this.sun.target.position.set(at.x, 0, at.z);
+    this.sun.position.set(at.x - 7, 15, at.z + 8);
+    this.sun.target.updateMatrixWorld();
   }
 
   aimDirectionFromScreen(screen) {
     if (!screen) return null;
-    const rect = this.renderer.domElement.getBoundingClientRect();
-    const point = new THREE.Vector2(
-      ((screen.x - rect.left) / rect.width) * 2 - 1,
-      -((screen.y - rect.top) / rect.height) * 2 + 1,
-    );
-    this.raycaster.setFromCamera(point, this.camera);
+    const rect = this.canvasRect;
+    this.ndc.set(((screen.x - rect.left) / rect.width) * 2 - 1,
+      -((screen.y - rect.top) / rect.height) * 2 + 1);
+    this.raycaster.setFromCamera(this.ndc, this.camera);
     if (!this.raycaster.ray.intersectPlane(this.groundPlane, this.pointerGround)) return null;
-    const at = toWorld(this.player.x, this.player.y);
-    const direction = { x: this.pointerGround.x - at.x, y: this.pointerGround.z - at.z };
+    const at = toWorld(this.player.x, this.player.y, this.worldScratch);
+    const direction = this.aimScratch;
+    direction.x = this.pointerGround.x - at.x;
+    direction.y = this.pointerGround.z - at.z;
     return Math.hypot(direction.x, direction.y) > .001 ? direction : null;
+  }
+
+  beginFrame(now) {
+    const interval = 1000 / (this.performanceSettings?.fpsLimit ?? 60);
+    if (now - this.lastRenderedAt < interval - 1) {
+      requestAnimationFrame(this.frame);
+      return false;
+    }
+    this.lastRenderedAt = now;
+    this.frameCpuStart = performance.now();
+    return true;
+  }
+
+  finishFrame(now) {
+    this.frameStats.add(now, performance.now() - this.frameCpuStart);
+    if (now - this.lastMetricsAt < 500) return;
+    this.lastMetricsAt = now;
+    const stats = this.frameStats.summary();
+    if (!this.autoQualityChosen && now >= this.autoQualityAt && this.frameStats.count >= 60) {
+      this.autoQualityChosen = true;
+      if (!this.performancePanel.quality && !this.performancePanel.hasOverrides()) {
+        const chosen = chooseQuality(stats.average);
+        this.qualitySelect.value = chosen;
+        this.setRenderQuality(chosen);
+        this.autoQualityReviewAt = now + 3000;
+      }
+    }
+    if (this.autoQualityReviewAt && now >= this.autoQualityReviewAt) {
+      this.autoQualityReviewAt = 0;
+      if (!this.performancePanel.quality && !this.performancePanel.hasOverrides() &&
+          this.frameStats.count >= 60 && this.performanceSettings.fpsLimit === 60) {
+        const chosen = chooseQuality(stats.average);
+        if (chosen !== this.renderQuality) {
+          this.qualitySelect.value = chosen;
+          this.setRenderQuality(chosen);
+        }
+      }
+    }
+    if (this.performanceSettings?.resolutionScale === undefined) {
+      const previous = this.adaptiveRatio.value;
+      this.adaptiveRatio.update(this.frameStats.recentAverage(), now,
+        this.performanceSettings.fpsLimit);
+      if (previous !== this.adaptiveRatio.value) this.resize();
+    }
+    let entities = this.match.actors.length + this.match.gems.length +
+      this.projectiles.length + this.bombs.length + this.tanks.length +
+      this.superShots.length + this.effects.activeParticles;
+    if (this.wormhole.hole) entities++;
+    for (const hole of this.remoteWormholes.values()) if (hole.hole) entities++;
+    this.performancePanel.showMetrics(stats, this.renderer, entities, this.currentPixelRatio);
   }
 
   frame(now) {
     if (!this.running) return;
     if (this.role === 'client') { this.frameClient(now); return; }
+    if (!this.beginFrame(now)) return;
     const seconds = Math.min((now - this.lastFrame) / 1000, .04);
     this.lastFrame = now;
     this.applyWormholeTransition(this.wormhole.update(now, ARENA, OBSTACLES, this.player.radius), now);
@@ -350,10 +505,9 @@ export class GemGame {
     if (pullPosition) this.placeJohnny(pullPosition);
     this.playerActor.invulnerable = this.wormhole.invulnerable;
     const k = this.keys;
-    const keyboard = {
-      x: Number(k.has('KeyD') || k.has('ArrowRight')) - Number(k.has('KeyA') || k.has('ArrowLeft')),
-      y: Number(k.has('KeyS') || k.has('ArrowDown')) - Number(k.has('KeyW') || k.has('ArrowUp')),
-    };
+    const keyboard = this.keyboardDirection;
+    keyboard.x = Number(k.has('KeyD') || k.has('ArrowRight')) - Number(k.has('KeyA') || k.has('ArrowLeft'));
+    keyboard.y = Number(k.has('KeyS') || k.has('ArrowDown')) - Number(k.has('KeyW') || k.has('ArrowUp'));
     const touch = this.controls.move;
     const move = Math.hypot(touch.x, touch.y) > .05 ? touch : keyboard;
     if (this.playerActor.active && this.match.phase !== 'finished' && !this.wormhole.invulnerable) {
@@ -378,15 +532,18 @@ export class GemGame {
         : this.controls.aim ?? this.aimDirectionFromScreen(this.mouseControls.aimScreen)) : null;
     if (activeAim) this.player.setAim(activeAim);
     else if (now < this.attackFacingUntil) this.player.setAim(this.attackFacing);
-    updateAimIndicator(this.aimIndicator, toWorld(this.player.x, this.player.y), activeAim,
+    updateAimIndicator(this.aimIndicator,
+      toWorld(this.player.x, this.player.y, this.worldScratch), activeAim,
       superAiming ? this.player.stats.superRange : this.player.stats.attackRange);
 
-    const attacks = [];
+    const attacks = this.attackQueue;
+    attacks.length = 0;
     let action;
     while ((action = this.controls.consumeAttack())) attacks.push(action);
     let released;
     while ((released = this.mouseControls.consumeRelease())) {
-      attacks.push({ type: 'aim', direction: this.aimDirectionFromScreen(released) });
+      const direction = this.aimDirectionFromScreen(released);
+      attacks.push({ type: 'aim', direction: direction ? { ...direction } : null });
     }
     while (this.keyboardAttacks > 0) {
       attacks.push({ type: 'auto' });
@@ -461,7 +618,9 @@ export class GemGame {
       const actor = this.match.actors.find(fighter => fighter.id === id);
       if (actor) this.updateRemotePlayer(actor, gate, now, seconds);
     }
+    let botIndex = 0;
     for (const controller of this.bots.values()) {
+      if (botIndex++ >= this.activeBotCount) continue;
       const fire = controller.update(now, seconds, this.match);
       if (controller.actor.characterId === 'kira' &&
           this.kiraCharge.get(controller.actor.id) >= controller.actor.stats.superChargeMax &&
@@ -487,8 +646,9 @@ export class GemGame {
         this.onShot(controller.actor, shot, now);
       }
     }
-    this.currentAmmoFractions = this.player.ammo.fractions(now);
-    updateAmmoBar(this.ammoBar, this.currentAmmoFractions, toWorld(this.player.x, this.player.y), this.camera);
+    this.player.ammo.fractions(now, this.currentAmmoFractions);
+    updateAmmoBar(this.ammoBar, this.currentAmmoFractions,
+      toWorld(this.player.x, this.player.y, this.worldScratch), this.camera);
     this.ammoHudFills.forEach((fill, index) => {
       const transform = `scaleX(${Math.round(this.currentAmmoFractions[index] * 50) / 50})`;
       if (fill.style.transform !== transform) fill.style.transform = transform;
@@ -546,9 +706,17 @@ export class GemGame {
     this.updateBombs(now);
     this.updateSuperShots(seconds, now);
     this.wormholeVisual.update(now, this.wormhole.hole);
-    const wasAlive = new Map(this.match.actors.map(actor => [actor.id, actor.active]));
-    const gemsBefore = new Map(this.match.gems.map(gem => [gem.id, gem]));
-    const heldBefore = new Map(this.match.actors.map(actor => [actor.id, actor.gems]));
+    const wasAlive = this.wasAlive;
+    const gemsBefore = this.gemsBefore;
+    const heldBefore = this.heldBefore;
+    wasAlive.clear();
+    gemsBefore.clear();
+    heldBefore.clear();
+    for (const actor of this.match.actors) {
+      wasAlive.set(actor.id, actor.active);
+      heldBefore.set(actor.id, actor.gems);
+    }
+    for (const gem of this.match.gems) gemsBefore.set(gem.id, gem);
     this.match.update(now);
     for (const actor of this.match.actors) {
       if (!wasAlive.get(actor.id) && actor.active) this.onRespawn(actor, now);
@@ -560,7 +728,9 @@ export class GemGame {
       this.playerActor.vy = 0;
       this.player.syncPosition();
     }
-    const gains = new Map(this.match.actors.map(actor => [actor.id, actor.gems - heldBefore.get(actor.id)]));
+    const gains = this.gains;
+    gains.clear();
+    for (const actor of this.match.actors) gains.set(actor.id, actor.gems - heldBefore.get(actor.id));
     for (const gem of gemsBefore.values()) {
       if (this.match.gems.includes(gem)) continue;
       const collector = this.match.actors.find(actor => gains.get(actor.id) > 0 &&
@@ -590,11 +760,11 @@ export class GemGame {
       this.player.heroRoot.scale.multiplyScalar(Math.max(.05, 1 - progress * .95));
       this.player.standRoot.scale.multiplyScalar(Math.max(.05, 1 - progress * .95));
     } else if (this.wormhole.inside && this.player.standRoot.visible) {
-      const at = toWorld(this.player.x, this.player.y);
+      const at = toWorld(this.player.x, this.player.y, this.worldScratch);
       this.player.standRoot.position.set(at.x + this.player.aim.x * .48,
         .18, at.z + this.player.aim.y * .48);
     }
-    const playerAt = toWorld(this.playerActor.x, this.playerActor.y);
+    const playerAt = toWorld(this.playerActor.x, this.playerActor.y, this.worldScratch);
     this.playerHealthBar.group.position.set(playerAt.x, 2.43, playerAt.z);
     this.playerHealthBar.group.visible = this.playerActor.active;
     updateHealthBar(this.playerHealthBar, this.playerActor.hp, this.camera, seconds, now,
@@ -605,7 +775,9 @@ export class GemGame {
       }
       updateGemVisual(this.gemVisuals.get(gem.id), gem, now, this.gemLaunches.get(gem.id));
     }
-    const liveGemIds = new Set(this.match.gems.map(gem => gem.id));
+    const liveGemIds = this.liveGemIds;
+    liveGemIds.clear();
+    for (const gem of this.match.gems) liveGemIds.add(gem.id);
     for (const [id, visual] of this.gemVisuals) {
       if (liveGemIds.has(id)) continue;
       this.garbage.release('gem', visual);
@@ -617,6 +789,7 @@ export class GemGame {
     this.updateFlyGems(now);
     this.updateShake(now);
     this.renderScene();
+    this.finishFrame(now);
     requestAnimationFrame(this.frame);
   }
 
@@ -822,11 +995,12 @@ export class GemGame {
   }
 
   frameClient(now) {
+    if (!this.beginFrame(now)) return;
     const seconds = Math.min((now - this.lastFrame) / 1000, .04);
     this.lastFrame = now;
     const latest = this.snapshotBuffer.latest();
     this.applyClientSnapshot(latest, now);
-    const sampled = this.snapshotBuffer.sample(now);
+    const sampled = this.snapshotBuffer.sample(now, true);
     if (sampled) for (const state of sampled.actors) {
       if (state.id === this.localActorId) continue;
       const actor = this.match.actors.find(fighter => fighter.id === state.id);
@@ -835,10 +1009,9 @@ export class GemGame {
       actor.y = state.y;
     }
     const k = this.keys;
-    const keyboard = {
-      x: Number(k.has('KeyD') || k.has('ArrowRight')) - Number(k.has('KeyA') || k.has('ArrowLeft')),
-      y: Number(k.has('KeyS') || k.has('ArrowDown')) - Number(k.has('KeyW') || k.has('ArrowUp')),
-    };
+    const keyboard = this.keyboardDirection;
+    keyboard.x = Number(k.has('KeyD') || k.has('ArrowRight')) - Number(k.has('KeyA') || k.has('ArrowLeft'));
+    keyboard.y = Number(k.has('KeyS') || k.has('ArrowDown')) - Number(k.has('KeyW') || k.has('ArrowUp'));
     const touch = this.controls.move;
     const move = Math.hypot(touch.x, touch.y) > .05 ? touch : keyboard;
     if (this.playerActor.active && !this.playerActor.invulnerable &&
@@ -855,7 +1028,8 @@ export class GemGame {
         ? this.aimDirectionFromScreen(this.mouseControls.mouseScreen) ?? this.player.aim
         : this.controls.aim ?? this.aimDirectionFromScreen(this.mouseControls.aimScreen)) : null;
     if (activeAim) this.player.setAim(activeAim);
-    updateAimIndicator(this.aimIndicator, toWorld(this.player.x, this.player.y), activeAim,
+    updateAimIndicator(this.aimIndicator,
+      toWorld(this.player.x, this.player.y, this.worldScratch), activeAim,
       superAiming ? this.player.stats.superRange : this.player.stats.attackRange);
 
     let action;
@@ -863,7 +1037,7 @@ export class GemGame {
       this.pendingNetworkActions.push({ kind: 'attack', action });
     while ((action = this.mouseControls.consumeRelease())) this.pendingNetworkActions.push({
       kind: 'attack', action: { type: 'aim',
-        direction: this.aimDirectionFromScreen(action) ?? this.player.aim } });
+        direction: { ...(this.aimDirectionFromScreen(action) ?? this.player.aim) } } });
     while (this.keyboardAttacks > 0) {
       this.pendingNetworkActions.push({ kind: 'attack', action: { type: 'auto' } });
       this.keyboardAttacks--;
@@ -882,7 +1056,7 @@ export class GemGame {
 
     this.ammoBar.group.visible = this.playerActor.active;
     updateAmmoBar(this.ammoBar, this.currentAmmoFractions,
-      toWorld(this.player.x, this.player.y), this.camera);
+      toWorld(this.player.x, this.player.y, this.worldScratch), this.camera);
     this.ammoHudFills.forEach((fill, index) => {
       const transform = `scaleX(${Math.round((this.currentAmmoFractions[index] ?? 0) * 50) / 50})`;
       if (fill.style.transform !== transform) fill.style.transform = transform;
@@ -917,7 +1091,7 @@ export class GemGame {
         now < this.characterFx.get(actor.id).deathUntil);
       this.updateCharacterFx(actor, now);
     }
-    const playerAt = toWorld(this.player.x, this.player.y);
+    const playerAt = toWorld(this.player.x, this.player.y, this.worldScratch);
     this.playerHealthBar.group.position.set(playerAt.x, 2.43, playerAt.z);
     this.playerHealthBar.group.visible = this.playerActor.active;
     updateHealthBar(this.playerHealthBar, this.playerActor.hp, this.camera, seconds, now,
@@ -928,7 +1102,9 @@ export class GemGame {
         this.garbage.acquire('gem', createGemVisual));
       updateGemVisual(this.gemVisuals.get(gem.id), gem, now);
     }
-    const liveGemIds = new Set(this.match.gems.map(gem => gem.id));
+    const liveGemIds = this.liveGemIds;
+    liveGemIds.clear();
+    for (const gem of this.match.gems) liveGemIds.add(gem.id);
     for (const [id, visual] of this.gemVisuals) {
       if (liveGemIds.has(id)) continue;
       this.garbage.release('gem', visual);
@@ -938,6 +1114,7 @@ export class GemGame {
     this.effects.update(seconds);
     this.updateShake(now);
     this.renderScene();
+    this.finishFrame(now);
     requestAnimationFrame(this.frame);
   }
 
@@ -1026,7 +1203,8 @@ export class GemGame {
   }
 
   updateTanks(now, seconds) {
-    for (const tank of [...this.tanks]) {
+    for (let index = this.tanks.length - 1; index >= 0; index--) {
+      const tank = this.tanks[index];
       const result = stepTank(tank, now, seconds, this.match.actors, this.tankGrid, OBSTACLES);
       if (result) {
         if (result === 'hit') this.explodeAt(tank, tank.team, tank.damage, tank.blastRadius,
@@ -1193,7 +1371,7 @@ export class GemGame {
       }));
       this.scene.add(state.beam);
     }
-    const at = toWorld(actor.x, actor.y);
+    const at = toWorld(actor.x, actor.y, this.worldScratch);
     state.beam.position.set(at.x, 1.6, at.z);
     state.beam.visible = true;
     this.effects.burst(at.x, .35, at.z, 10,
@@ -1220,9 +1398,9 @@ export class GemGame {
     const scale = dying ? Math.max(.05, 1 - deathProgress * .95)
       : spawnProgress < 1 ? .55 + spawnProgress * .45 : 1;
     const hop = spawnProgress < 1 ? Math.sin(spawnProgress * Math.PI) * .5 : 0;
-    const at = toWorld(actor.x, actor.y);
+    const at = toWorld(actor.x, actor.y, this.worldScratch);
     if (actor.id === this.localActorId) {
-      const stand = standPosition(at, this.player.aim);
+      const stand = standPosition(at, this.player.aim, this.standScratch);
       this.player.heroRoot.position.x = at.x + offsetX;
       this.player.heroRoot.position.z = at.z + offsetZ;
       this.player.heroRoot.position.y = (actor.active ? this.player.heroRoot.position.y : 0) + hop;
@@ -1308,8 +1486,10 @@ export class GemGame {
   }
 
   updateHud(now) {
-    const scores = this.match.scores;
-    for (const team of ['blue', 'red']) {
+    if (now - this.lastHudAt < 100 && this.match.phase !== 'finished') return;
+    this.lastHudAt = now;
+    const scores = this.match.scoreInto(this.hudScores);
+    for (const team of teams) {
       if (scores[team] !== this.scoreShown[team]) {
         this.scoreShown[team] = scores[team];
         this.pulseScore(team);
@@ -1323,9 +1503,11 @@ export class GemGame {
       : `${Math.floor(totalSeconds / 60)}:${String(totalSeconds % 60).padStart(2, '0')}`);
     this.clock.classList.toggle('sudden', this.match.phase === 'suddenDeath');
     setTextIfChanged(this.healthHud, `VIDA ${this.playerActor.hp}/${this.playerActor.stats.health}`);
-    const running = Object.entries(this.match.countdowns).filter(([, end]) => end !== null);
-    if (running.length) {
-      const [team, end] = running.sort((a, b) => a[1] - b[1])[0];
+    const blueEnd = this.match.countdowns.blue;
+    const redEnd = this.match.countdowns.red;
+    if (blueEnd !== null || redEnd !== null) {
+      const team = redEnd === null || (blueEnd !== null && blueEnd <= redEnd) ? 'blue' : 'red';
+      const end = this.match.countdowns[team];
       setTextIfChanged(this.countdown,
         `${team === this.viewTeam ? 'SEU TIME' : 'INIMIGOS'} VENCEM EM ${Math.max(0, Math.ceil((end - now) / 1000))}`);
       this.countdown.hidden = false;

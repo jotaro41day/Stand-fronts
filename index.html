@@ -42,9 +42,27 @@
         <div class="match-center"><strong id="match-clock">3:00</strong><small id="health">VIDA 3/3</small></div>
         <div class="team-gems red"><span>INIMIGOS</span><strong id="red-score">0/10</strong></div>
       </header>
-      <label class="quality-control" for="quality">QUALIDADE
+      <div class="quality-control"><button type="button" id="quality-trigger" aria-controls="performance-panel" aria-label="Toque cinco vezes para abrir ou fechar o painel de desempenho">QUALIDADE</button>
         <select id="quality" aria-label="Qualidade dos efeitos"><option value="high">Alta</option><option value="medium" selected>Média</option><option value="low">Baixa</option></select>
-      </label>
+      </div>
+      <div class="performance-hud" id="performance-hud" aria-live="off" hidden></div>
+      <aside class="performance-panel" id="performance-panel" aria-label="Diagnóstico de desempenho" hidden>
+        <strong>DESEMPENHO</strong><span>Toque 5× em QUALIDADE para fechar</span>
+        <label><input type="checkbox" data-perf="shadows" /> Sombras</label>
+        <label><input type="checkbox" data-perf="outline" /> Contorno</label>
+        <label><input type="checkbox" data-perf="bloom" /> Bloom</label>
+        <label><input type="checkbox" data-perf="postprocess" /> Pós-processamento</label>
+        <label><input type="checkbox" data-perf="antialias" /> Antialias</label>
+        <label><input type="checkbox" data-perf="particles" /> Partículas</label>
+        <label><input type="checkbox" id="perf-resolution-auto" checked /> Resolução automática</label>
+        <label>Escala de resolução <output id="perf-resolution-value">1,00×</output>
+          <input type="range" data-perf="resolutionScale" min="0.5" max="1.5" step="0.05" value="1" />
+        </label>
+        <label>Bots com IA <output id="perf-bots-value">5/5</output>
+          <input type="range" data-perf="botCount" min="0" max="6" step="1" value="5" />
+        </label>
+        <label>Limite de FPS <select data-perf="fpsLimit"><option value="60">60</option><option value="30">30</option></select></label>
+      </aside>
       <div class="countdown" id="countdown" aria-live="polite" hidden></div>
       <div class="instructions" id="instructions"><span class="desktop-help">WASD / SETAS MOVE <b>·</b> MOUSE ATACA <b>·</b> SEGURE E PARA MIRAR O SUPER</span><span class="touch-help">JOYSTICK MOVE <b>·</b> ARRASTE ATAQUE OU SUPER PARA MIRAR <b>·</b> SOLTE PARA DISPARAR</span></div>
       <div class="controls" aria-label="Controles de toque">

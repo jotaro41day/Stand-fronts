@@ -1,10 +1,9 @@
-export function standPosition(player, aim) {
+export function standPosition(player, aim, out = {}) {
   const behind = 1.12;
   const side = .48;
-  return {
-    x: player.x - aim.x * behind + aim.y * side,
-    z: player.z - aim.y * behind - aim.x * side,
-  };
+  out.x = player.x - aim.x * behind + aim.y * side;
+  out.z = player.z - aim.y * behind - aim.x * side;
+  return out;
 }
 
 export function standHoverHeight(time) {

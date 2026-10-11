@@ -2,14 +2,13 @@ import { CHARACTER_BALANCE } from '../balance.js';
 
 export const MOVE_SPEED = CHARACTER_BALANCE.johnny.moveSpeed;
 
-export function movePosition(position, input, speed, seconds, bounds) {
+export function movePosition(position, input, speed, seconds, bounds, out = {}) {
   const length = Math.hypot(input.x, input.y);
   const scale = length > 1 ? 1 / length : 1;
   const margin = bounds.margin ?? 0;
-  return {
-    x: Math.max(margin, Math.min(bounds.width - margin, position.x + input.x * scale * speed * seconds)),
-    y: Math.max(margin, Math.min(bounds.height - margin, position.y + input.y * scale * speed * seconds)),
-  };
+  out.x = Math.max(margin, Math.min(bounds.width - margin, position.x + input.x * scale * speed * seconds));
+  out.y = Math.max(margin, Math.min(bounds.height - margin, position.y + input.y * scale * speed * seconds));
+  return out;
 }
 
 export function shotVelocity(direction, speed) {
@@ -28,11 +27,23 @@ export function hitsCircleRect(circle, rect) {
   return Math.hypot(circle.x - nearX, circle.y - nearY) <= circle.radius;
 }
 
-export function moveAroundObstacles(position, input, speed, seconds, bounds, obstacles, radius) {
-  const next = movePosition(position, input, speed, seconds, bounds);
-  const xOnly = { x: next.x, y: position.y, radius };
-  const x = obstacles.some(box => hitsCircleRect(xOnly, box)) ? position.x : next.x;
-  const yOnly = { x, y: next.y, radius };
-  const y = obstacles.some(box => hitsCircleRect(yOnly, box)) ? position.y : next.y;
-  return { x, y };
+function hitsCircleRectAt(x, y, radius, rect) {
+  const nearX = Math.max(rect.x, Math.min(x, rect.x + rect.width));
+  const nearY = Math.max(rect.y, Math.min(y, rect.y + rect.height));
+  return Math.hypot(x - nearX, y - nearY) <= radius;
+}
+
+export function moveAroundObstacles(position, input, speed, seconds, bounds, obstacles, radius, out = {}) {
+  movePosition(position, input, speed, seconds, bounds, out);
+  let x = out.x;
+  for (const box of obstacles) {
+    if (hitsCircleRectAt(x, position.y, radius, box)) { x = position.x; break; }
+  }
+  let y = out.y;
+  for (const box of obstacles) {
+    if (hitsCircleRectAt(x, y, radius, box)) { y = position.y; break; }
+  }
+  out.x = x;
+  out.y = y;
+  return out;
 }

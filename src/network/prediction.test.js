@@ -15,6 +15,10 @@ test('other players and projectiles interpolate between ordered snapshots', () =
   assert.equal(halfway.actors[0].x, 5);
   assert.equal(halfway.actors[0].y, 10);
   assert.equal(halfway.projectiles[0].x, 10);
+  const reused = buffer.sample(1150, true);
+  assert.equal(reused.actors[0].x, 5);
+  assert.equal(buffer.sample(1175, true), reused);
+  assert.equal(reused.actors[0].x, 7.5);
 });
 
 test('local prediction corrects small drift smoothly and snaps after a respawn', () => {

@@ -11,6 +11,12 @@ const gemHaloGeometry = new THREE.TorusGeometry(.28, .035, 4, 12);
 const gemHaloMaterial = new THREE.MeshBasicMaterial({ color: 0xe56fff, toneMapped: false });
 const healthBack = new THREE.PlaneGeometry(.93, .12);
 const healthFill = new THREE.PlaneGeometry(.89, .08);
+const world = { x: 0, z: 0 };
+const standWorld = { x: 0, z: 0 };
+const ringGeometry = new THREE.CylinderGeometry(.55, .55, .08, 16);
+const bodyGeometry = new THREE.CylinderGeometry(.34, .44, .82, 8);
+const headGeometry = new THREE.SphereGeometry(.42, 10, 8);
+const crestGeometry = new THREE.ConeGeometry(.2, .48, 6);
 
 export function createHealthBar(scene, team, height = 2.23) {
   const color = team === 'blue' ? 0x49c5f2 : 0xf1718e;
@@ -41,10 +47,10 @@ export function updateHealthBar(bar, hp, camera, seconds, now, maxHealth = CHARA
   if (fraction > bar.delayed) bar.delayed = fraction;
   bar.fraction = fraction;
   if (now >= bar.delay) bar.delayed += (fraction - bar.delayed) * Math.min(1, seconds * 6);
-  for (const [mesh, width] of [[bar.fill, fraction], [bar.trail, bar.delayed]]) {
-    mesh.scale.x = Math.max(.001, width);
-    mesh.position.x = -.89 * (1 - width) / 2;
-  }
+  bar.fill.scale.x = Math.max(.001, fraction);
+  bar.fill.position.x = -.89 * (1 - fraction) / 2;
+  bar.trail.scale.x = Math.max(.001, bar.delayed);
+  bar.trail.position.x = -.89 * (1 - bar.delayed) / 2;
   bar.group.quaternion.copy(camera.quaternion);
 }
 
@@ -52,17 +58,17 @@ export function createFighterVisual(scene, actor) {
   const color = actor.characterId === 'kira' ? 0xb668d9
     : actor.team === 'blue' ? 0x49c5f2 : 0xf1718e;
   const group = new THREE.Group();
-  const ring = outlinedMesh(new THREE.CylinderGeometry(.55, .55, .08, 16), color);
+  const ring = outlinedMesh(ringGeometry, color);
   ring.position.y = .05;
   group.add(ring);
   const figure = new THREE.Group();
-  const body = outlinedMesh(new THREE.CylinderGeometry(.34, .44, .82, 8), color);
+  const body = outlinedMesh(bodyGeometry, color);
   body.position.y = .63;
   figure.add(body);
-  const head = outlinedMesh(new THREE.SphereGeometry(.42, 10, 8), 0xffd3aa);
+  const head = outlinedMesh(headGeometry, 0xffd3aa);
   head.position.y = 1.35;
   figure.add(head);
-  const crest = outlinedMesh(new THREE.ConeGeometry(.2, .48, 6), color);
+  const crest = outlinedMesh(crestGeometry, color);
   crest.position.y = 1.82;
   figure.add(crest);
   group.add(figure);
@@ -92,13 +98,13 @@ export async function loadFighterModels(scene, visual, actor) {
 
 export function updateFighterVisual(visual, actor, camera, seconds = 0, now = 0, dying = false) {
   visual.group.visible = (actor.active && !actor.inside) || dying;
-  const at = toWorld(actor.x, actor.y);
+  const at = toWorld(actor.x, actor.y, world);
   visual.group.position.set(at.x, 0, at.z);
   if (actor.aim) visual.group.rotation.y = -Math.atan2(actor.aim.y, actor.aim.x);
   visual.animator?.update(now, Math.min(1, Math.hypot(actor.vx || 0, actor.vy || 0) /
     actor.stats.moveSpeed), seconds);
   if (visual.standRoot) {
-    const stand = standPosition(at, actor.aim ?? { x: 1, y: 0 });
+    const stand = standPosition(at, actor.aim ?? { x: 1, y: 0 }, standWorld);
     if (actor.characterId === 'kira') {
       stand.x += (actor.aim?.x ?? 1) * .75;
       stand.z += (actor.aim?.y ?? 0) * .75;
@@ -125,7 +131,7 @@ export function createGemVisual(scene) {
 
 export function updateGemVisual(visual, gem, now, launch = null) {
   const jump = Math.min(1, Math.max(0, (now - gem.bornAt) / GEM_RULES.gemLandingTime));
-  const at = toWorld(gem.x, gem.y);
+  const at = toWorld(gem.x, gem.y, world);
   if (launch) {
     const progress = Math.min(1, (now - launch.at) / 420);
     visual.position.set(launch.x + (at.x - launch.x) * progress,

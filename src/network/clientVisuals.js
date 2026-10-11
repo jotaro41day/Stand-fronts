@@ -27,10 +27,16 @@ export class ClientVisuals {
     this.bombs = new Map();
     this.tanks = new Map();
     this.holes = new Map();
+    this.seenShots = new Set();
+    this.seenBombs = new Set();
+    this.seenTanks = new Set();
+    this.seenHoles = new Set();
+    this.world = { x: 0, z: 0 };
   }
 
   sync(snapshot, now) {
-    const seenShots = new Set();
+    const seenShots = this.seenShots;
+    seenShots.clear();
     for (const shot of snapshot.projectiles) {
       seenShots.add(shot.id);
       let item = this.shots.get(shot.id);
@@ -41,7 +47,7 @@ export class ClientVisuals {
         item = { visual, kind };
         this.shots.set(shot.id, item);
       }
-      const at = toWorld(shot.x, shot.y);
+      const at = toWorld(shot.x, shot.y, this.world);
       item.visual.position.set(at.x, shot.kind === 'bomb' ? .8 : .78, at.z);
       item.visual.rotation.y = Math.atan2(shot.vx, shot.vy);
     }
@@ -51,7 +57,8 @@ export class ClientVisuals {
       this.shots.delete(id);
     }
 
-    const seenBombs = new Set();
+    const seenBombs = this.seenBombs;
+    seenBombs.clear();
     for (const bomb of snapshot.bombs) {
       seenBombs.add(bomb.id);
       let visual = this.bombs.get(bomb.id);
@@ -67,7 +74,8 @@ export class ClientVisuals {
       this.bombs.delete(id);
     }
 
-    const seenTanks = new Set();
+    const seenTanks = this.seenTanks;
+    seenTanks.clear();
     for (const tank of snapshot.tanks) {
       seenTanks.add(tank.id);
       let visual = this.tanks.get(tank.id);
@@ -83,7 +91,8 @@ export class ClientVisuals {
       this.tanks.delete(id);
     }
 
-    const seenHoles = new Set();
+    const seenHoles = this.seenHoles;
+    seenHoles.clear();
     for (const hole of snapshot.holes) {
       seenHoles.add(hole.ownerId);
       let item = this.holes.get(hole.ownerId);

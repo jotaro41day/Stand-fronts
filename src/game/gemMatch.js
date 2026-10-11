@@ -26,6 +26,7 @@ const starts = [
   { id: 'enemy-center', team: 'red', x: 800, y: 450, spawn: { x: 800, y: 150 } },
   { id: 'enemy-right', team: 'red', x: 1180, y: 390, spawn: { x: 935, y: 150 } },
 ];
+const teams = ['blue', 'red'];
 
 export class GemMatch {
   constructor(startAt = 0, playerCharacter = 'johnny', roster = {}) {
@@ -42,15 +43,20 @@ export class GemMatch {
     this.gems = [];
     this.nextGemId = 0;
     this.countdowns = { blue: null, red: null };
+    this.scoreScratch = { blue: 0, red: 0 };
     this.phase = 'playing';
     this.winner = null;
   }
 
   get scores() {
-    return {
-      blue: this.actors.filter(actor => actor.team === 'blue').reduce((sum, actor) => sum + actor.gems, 0),
-      red: this.actors.filter(actor => actor.team === 'red').reduce((sum, actor) => sum + actor.gems, 0),
-    };
+    return this.scoreInto({ blue: 0, red: 0 });
+  }
+
+  scoreInto(out) {
+    out.blue = 0;
+    out.red = 0;
+    for (const actor of this.actors) out[actor.team] += actor.gems;
+    return out;
   }
 
   spawnGem(now) {
@@ -94,12 +100,12 @@ export class GemMatch {
 
   checkVictory(now) {
     if (this.phase === 'finished') return;
-    const scores = this.scores;
+    const scores = this.scoreInto(this.scoreScratch);
     if (this.phase === 'suddenDeath' && scores.blue !== scores.red) {
       this.finish(scores.blue > scores.red ? 'blue' : 'red');
       return;
     }
-    for (const team of ['blue', 'red']) {
+    for (const team of teams) {
       if (scores[team] < GEM_RULES.targetGems) this.countdowns[team] = null;
       else {
         this.countdowns[team] ??= now + GEM_RULES.countdownTime;
@@ -134,15 +140,16 @@ export class GemMatch {
       this.spawnGem(this.nextGemAt);
       this.nextGemAt += GEM_RULES.gemInterval;
     }
-    for (const gem of [...this.gems]) {
-      if (stepAt < gem.bornAt + GEM_RULES.gemLandingTime) continue;
+    for (let index = 0; index < this.gems.length;) {
+      const gem = this.gems[index];
+      if (stepAt < gem.bornAt + GEM_RULES.gemLandingTime) { index++; continue; }
       const collector = this.actors.find(actor => actor.active && !actor.invulnerable &&
         Math.hypot(actor.x - gem.x, actor.y - gem.y) <= actor.radius + gem.radius);
-      if (collector) this.collect(collector, gem, stepAt);
+      if (!collector || !this.collect(collector, gem, stepAt)) index++;
     }
     this.checkVictory(stepAt);
     if (this.phase === 'playing' && now >= this.startAt + GEM_RULES.matchTime) {
-      const scores = this.scores;
+      const scores = this.scoreInto(this.scoreScratch);
       if (scores.blue === scores.red) {
         this.phase = 'suddenDeath';
         if (this.nextGemAt < now) this.nextGemAt = now + GEM_RULES.gemInterval;

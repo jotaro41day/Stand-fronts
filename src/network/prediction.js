@@ -3,10 +3,33 @@ const position = (newer, older, amount) => older
   ? { ...newer, x: lerp(older.x, newer.x, amount),
     y: lerp(older.y, newer.y, amount) } : newer;
 
+function fillReusable(older, newer, key, map, output, amount) {
+  map.clear();
+  for (const item of older) map.set(item[key], item);
+  output.length = newer.length;
+  for (let index = 0; index < newer.length; index++) {
+    const item = newer[index];
+    const result = output[index] ?? (output[index] = {});
+    Object.assign(result, item);
+    const old = map.get(item[key]);
+    if (old) {
+      result.x = lerp(old.x, item.x, amount);
+      result.y = lerp(old.y, item.y, amount);
+    }
+  }
+}
+
 export class SnapshotBuffer {
   constructor(delayMs = 100) {
     this.delayMs = delayMs;
     this.items = [];
+    this.reused = {};
+    this.reusedActors = [];
+    this.reusedProjectiles = [];
+    this.reusedTanks = [];
+    this.oldActors = new Map();
+    this.oldProjectiles = new Map();
+    this.oldTanks = new Map();
   }
 
   push(snapshot, receivedAt) {
@@ -18,7 +41,7 @@ export class SnapshotBuffer {
 
   latest() { return this.items.at(-1)?.snapshot ?? null; }
 
-  sample(now) {
+  sample(now, reuse = false) {
     if (!this.items.length) return null;
     const target = now - this.delayMs;
     let left = this.items[0];
@@ -33,6 +56,19 @@ export class SnapshotBuffer {
       (target - left.receivedAt) / (right.receivedAt - left.receivedAt)));
     const previous = left.snapshot;
     const current = right.snapshot;
+    if (reuse) {
+      Object.assign(this.reused, current);
+      fillReusable(previous.actors, current.actors, 'id', this.oldActors,
+        this.reusedActors, amount);
+      fillReusable(previous.projectiles, current.projectiles, 'id', this.oldProjectiles,
+        this.reusedProjectiles, amount);
+      fillReusable(previous.tanks, current.tanks, 'id', this.oldTanks,
+        this.reusedTanks, amount);
+      this.reused.actors = this.reusedActors;
+      this.reused.projectiles = this.reusedProjectiles;
+      this.reused.tanks = this.reusedTanks;
+      return this.reused;
+    }
     const byId = (list, id) => new Map(list.map(item => [item[id], item]));
     const oldActors = byId(previous.actors, 'id');
     const oldShots = byId(previous.projectiles, 'id');

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { hitsCircleRect, moveAroundObstacles } from '../game/rules.js';
+import * as THREE from 'three';
 
 test('gem arena has mirrored cover, three routes, and blocks movement and shots', async () => {
   const { ARENA, OBSTACLES } = await import('./gemArena.js').catch(() => ({}));
@@ -21,4 +22,16 @@ test('gem arena has mirrored cover, three routes, and blocks movement and shots'
   const blocked = moveAroundObstacles({ x: wall.x - 30, y: shot.y }, { x: 1, y: 0 },
     245, .2, ARENA, OBSTACLES, 19);
   assert.ok(blocked.x < wall.x);
+});
+
+test('static cover uses shared instanced meshes and never enters the shadow map', async () => {
+  const { createGemArena } = await import('./gemArena.js');
+  const scene = new THREE.Scene();
+  createGemArena(scene);
+  let batches = 0;
+  scene.traverse(object => {
+    if (object.isInstancedMesh) batches++;
+    if (object.isMesh) assert.equal(object.castShadow, false);
+  });
+  assert.ok(batches >= 5);
 });

@@ -48,9 +48,11 @@ export const BOT_DIFFICULTY_SETTINGS = Object.freeze({
 
 const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
-const toward = (from, to) => {
+const toward = (from, to, out = {}) => {
   const length = Math.max(.001, distance(from, to));
-  return { x: (to.x - from.x) / length, y: (to.y - from.y) / length };
+  out.x = (to.x - from.x) / length;
+  out.y = (to.y - from.y) / length;
+  return out;
 };
 const bounded = (point, arena, radius) => ({
   x: clamp(point.x, arena.margin + radius, arena.width - arena.margin - radius),
@@ -210,6 +212,9 @@ export class BotController {
     this.path = [];
     this.decision = null;
     this.wasActive = actor.active;
+    this.nextPosition = { x: 0, y: 0 };
+    this.direction = { x: 0, y: 0 };
+    this.facing = { x: 0, y: actor.team === 'blue' ? -1 : 1 };
     actor.ammo = new AmmoMagazine(actor.stats ?? statsForActor(actor));
     actor.nextShot = 0;
     actor.aim = { x: 0, y: actor.team === 'blue' ? -1 : 1 };
@@ -245,21 +250,24 @@ export class BotController {
     }
     while (this.path.length && distance(actor, this.path[0]) < 13) this.path.shift();
     const waypoint = this.path[0];
-    const before = { x: actor.x, y: actor.y };
+    const beforeX = actor.x;
+    const beforeY = actor.y;
     if (waypoint && seconds > 0) {
-      const next = moveAroundObstacles(actor, toward(actor, waypoint),
+      const next = moveAroundObstacles(actor, toward(actor, waypoint, this.direction),
         (actor.stats ?? statsForActor(actor)).moveSpeed, seconds,
-        this.grid.arena, this.grid.obstacles, actor.radius);
+        this.grid.arena, this.grid.obstacles, actor.radius, this.nextPosition);
       actor.x = next.x;
       actor.y = next.y;
     }
-    actor.vx = seconds > 0 ? (actor.x - before.x) / seconds : 0;
-    actor.vy = seconds > 0 ? (actor.y - before.y) / seconds : 0;
+    actor.vx = seconds > 0 ? (actor.x - beforeX) / seconds : 0;
+    actor.vy = seconds > 0 ? (actor.y - beforeY) / seconds : 0;
     if (fire) actor.aim = fire.direction;
     else if (this.decision?.target?.team && this.decision.target.team !== actor.team) {
-      actor.aim = toward(actor, this.decision.target);
+      actor.aim = toward(actor, this.decision.target, this.facing);
     } else if (Math.hypot(actor.vx, actor.vy) > 1) {
-      actor.aim = toward(before, actor);
+      this.facing.x = actor.vx / Math.hypot(actor.vx, actor.vy);
+      this.facing.y = actor.vy / Math.hypot(actor.vx, actor.vy);
+      actor.aim = this.facing;
     }
     return fire;
   }

@@ -28,12 +28,13 @@ export class AmmoMagazine {
     return true;
   }
 
-  fractions(now) {
+  fractions(now, out = Array(this.capacity)) {
     this.update(now);
     const progress = this.nextReloadAt === null
       ? 0
       : 1 - (this.nextReloadAt - now) / this.reloadMs;
-    return Array.from({ length: this.capacity }, (_, index) =>
-      index < this.charges ? 1 : index === this.charges ? progress : 0);
+    for (let index = 0; index < this.capacity; index++)
+      out[index] = index < this.charges ? 1 : index === this.charges ? progress : 0;
+    return out;
   }
 }

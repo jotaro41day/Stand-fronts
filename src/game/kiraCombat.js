@@ -27,6 +27,7 @@ export function createTank(owner, now, stats, direction) {
     blastRadius: stats.superBlastRadius,
     expiresAt: now + stats.superTankLifetimeMs,
     nextPathAt: 0, path: [], target: null,
+    nextPosition: { x: 0, y: 0 },
     aim: { x: direction.x / length, y: direction.y / length } };
 }
 
@@ -51,9 +52,10 @@ export function stepTank(tank, now, seconds, actors, grid, obstacles) {
   const waypoint = tank.path[0];
   if (waypoint) {
     const length = Math.hypot(waypoint.x - tank.x, waypoint.y - tank.y) || 1;
-    tank.aim = { x: (waypoint.x - tank.x) / length, y: (waypoint.y - tank.y) / length };
+    tank.aim.x = (waypoint.x - tank.x) / length;
+    tank.aim.y = (waypoint.y - tank.y) / length;
     const next = moveAroundObstacles(tank, tank.aim, tank.speed, seconds,
-      grid.arena, obstacles, tank.radius);
+      grid.arena, obstacles, tank.radius, tank.nextPosition);
     tank.x = next.x;
     tank.y = next.y;
   }

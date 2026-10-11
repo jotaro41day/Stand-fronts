@@ -14,4 +14,10 @@ test('particle effects reuse a bounded pool at every quality level', async () =>
     assert.equal(effects.activeParticles, 0);
   }
   assert.equal(effects.particles.length, QUALITY.high.maxParticles);
+  effects.setEnabled(false);
+  assert.equal(effects.spawnParticle(0, 0, 0, 0x58d6ff), false);
+  assert.equal(effects.activeParticles, 0);
+  assert.equal(effects.mesh.visible, false);
+  effects.setEnabled(true);
+  assert.equal(effects.spawnParticle(0, 0, 0, 0x58d6ff), true);
 });

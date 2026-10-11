@@ -45,6 +45,9 @@ export class Player {
     this.nextShot = 0;
     this.ammo = new AmmoMagazine(this.stats);
     this.motion = 0;
+    this.worldPosition = { x: 0, z: 0 };
+    this.standPosition = { x: 0, z: 0 };
+    this.nextPosition = { x: 0, y: 0 };
     this.animator = null;
     this.standAnimator = null;
     this.modelSources = { hero: 'geométrico', stand: 'geométrico' };
@@ -69,18 +72,22 @@ export class Player {
       const root = name === 'hero' ? this.heroRoot : this.standRoot;
       root.clear();
       root.add(model);
+      if (name === 'hero') root.traverse(object => {
+        if (object.isMesh && !object.userData.isOutline) object.castShadow = true;
+      });
       this[name] = model;
       if (name === 'hero') this.animator = animator;
       else this.standAnimator = animator;
       this.modelSources[name] = 'GLB';
+      this.onModelLoaded?.();
     } catch (error) {
       console.warn(`Falha ao carregar ${assetName}.glb; modelo geométrico mantido.`, error);
     }
   }
 
   syncPosition() {
-    const at = toWorld(this.x, this.y);
-    const stand = standPosition(at, this.aim);
+    const at = toWorld(this.x, this.y, this.worldPosition);
+    const stand = standPosition(at, this.aim, this.standPosition);
     if (this.characterId === 'kira') {
       stand.x += this.aim.x * .75;
       stand.z += this.aim.y * .75;
@@ -92,7 +99,8 @@ export class Player {
 
   move(direction, seconds) {
     const speed = this.stats?.moveSpeed ?? MOVE_SPEED;
-    const next = moveAroundObstacles(this, direction, speed, seconds, ARENA, OBSTACLES, this.radius);
+    const next = moveAroundObstacles(this, direction, speed, seconds, ARENA, OBSTACLES,
+      this.radius, this.nextPosition);
     this.motion = seconds > 0
       ? Math.min(1, Math.hypot(next.x - this.x, next.y - this.y) / (speed * seconds))
       : 0;
@@ -105,7 +113,8 @@ export class Player {
   setAim(direction) {
     const length = Math.hypot(direction.x, direction.y);
     if (length < .001) return;
-    this.aim = { x: direction.x / length, y: direction.y / length };
+    this.aim.x = direction.x / length;
+    this.aim.y = direction.y / length;
     const angle = -Math.atan2(this.aim.y, this.aim.x);
     this.heroRoot.rotation.y = angle;
     this.standRoot.rotation.y = angle;
