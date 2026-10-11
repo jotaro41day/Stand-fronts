@@ -1,5 +1,5 @@
 {
-  "0": "loadModels.js",
+  "0": "ref_node_assert",
   "1": "writePrecache.mjs",
   "2": "GemGame.js",
   "3": "TouchControls",
@@ -9,12 +9,11 @@
   "7": "GameEffects",
   "8": "Stand Fronts 3D — Pique-Gema",
   "9": "assets/README.md",
-  "10": "kiraVisuals.js",
+  "10": "configureAndroid.mjs",
   "11": "AGENTS.md",
   "12": "botAI.js",
   "13": "main.js",
-  "14": "WormholeSuper",
   "15": "protocol.js",
   "16": "sw.js",
-  "18": "ref_node_assert"
+  "18": "SnapshotBuffer"
 }

@@ -34,6 +34,9 @@ import { createPlantedBombVisual, createTankVisual, updateBombVisual,
   updateTankVisual } from '../visual/kiraVisuals.js';
 
 const beamGeometry = new THREE.CylinderGeometry(.45, .75, 3.2, 10, 1, true);
+const setTextIfChanged = (element, value) => {
+  if (element.textContent !== value) element.textContent = value;
+};
 
 export class GemGame {
   constructor(characterId = 'johnny', options = {}) {
@@ -58,7 +61,7 @@ export class GemGame {
     this.scene.background = new THREE.Color(0x171329);
     this.camera = new THREE.OrthographicCamera(-8, 8, 5, -5, .1, 100);
     this.cameraFocus = new THREE.Vector3(0, 0, 0);
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'low-power' });
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -72,7 +75,8 @@ export class GemGame {
     const sun = new THREE.DirectionalLight(0xffe5b5, 3.0);
     sun.position.set(-7, 15, 8);
     sun.castShadow = true;
-    sun.shadow.mapSize.set(window.innerWidth < 650 ? 512 : 1024, window.innerWidth < 650 ? 512 : 1024);
+    this.highShadowSize = window.innerWidth < 650 ? 512 : 1024;
+    sun.shadow.mapSize.set(this.highShadowSize, this.highShadowSize);
     sun.shadow.camera.left = -19;
     sun.shadow.camera.right = 19;
     sun.shadow.camera.top = 13;
@@ -80,6 +84,7 @@ export class GemGame {
     sun.shadow.normalBias = .025;
     sun.shadow.radius = 3;
     this.scene.add(sun);
+    this.sun = sun;
 
     createGemArena(this.scene);
     this.match = new GemMatch(performance.now(), this.characterId, options.roster);
@@ -149,8 +154,7 @@ export class GemGame {
       return { element, active: false };
     });
     this.qualitySelect = document.getElementById('quality');
-    this.qualitySelect.addEventListener('change', () => this.effects.setQuality(this.qualitySelect.value));
-    this.effects.setQuality(this.qualitySelect.value);
+    this.qualitySelect.addEventListener('change', () => this.setRenderQuality(this.qualitySelect.value));
     this.controls = new TouchControls();
     this.mouseControls = new MouseControls(this.renderer.domElement);
     this.aimIndicator = createAimIndicator();
@@ -192,11 +196,8 @@ export class GemGame {
       document.querySelector('.team-gems.red span').textContent = 'SEU TIME';
     }
 
-    this.composer = new EffectComposer(this.renderer);
-    this.composer.addPass(new RenderPass(this.scene, this.camera));
-    this.bloomPass = new UnrealBloomPass(new THREE.Vector2(256, 256), .34, .2, .9);
-    this.composer.addPass(this.bloomPass);
-    this.composer.addPass(new OutputPass());
+    this.composer = null;
+    this.bloomPass = null;
 
     window.addEventListener('keydown', event => {
       if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'KeyE'].includes(event.code)) event.preventDefault();
@@ -223,6 +224,7 @@ export class GemGame {
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(this.container);
     this.resize();
+    this.setRenderQuality(this.qualitySelect.value);
 
     window.__stage1 = {
       getState: () => ({
@@ -252,10 +254,11 @@ export class GemGame {
           pixelRatio: this.renderer.getPixelRatio(),
           canvasWidth: this.renderer.domElement.width,
           canvasHeight: this.renderer.domElement.height,
-          targetWidth: this.composer.renderTarget1.width,
-          targetHeight: this.composer.renderTarget1.height,
-          bloomWidth: this.bloomPass.renderTargetBright.width,
-          bloomHeight: this.bloomPass.renderTargetBright.height,
+          renderQuality: this.renderQuality,
+          targetWidth: this.composer?.renderTarget1.width ?? null,
+          targetHeight: this.composer?.renderTarget1.height ?? null,
+          bloomWidth: this.bloomPass?.renderTargetBright.width ?? null,
+          bloomHeight: this.bloomPass?.renderTargetBright.height ?? null,
         },
       }),
     };
@@ -269,7 +272,7 @@ export class GemGame {
     const height = this.container.clientHeight || window.innerHeight;
     const pixelRatio = Math.min(window.devicePixelRatio, 2);
     this.renderer.setPixelRatio(pixelRatio);
-    this.composer.setPixelRatio(pixelRatio);
+    this.composer?.setPixelRatio(pixelRatio);
     const ratio = width / height;
     const viewWidth = Math.max(10.2, ratio * 12.5);
     const viewHeight = viewWidth / ratio;
@@ -279,8 +282,38 @@ export class GemGame {
     this.camera.bottom = -viewHeight / 2;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height);
-    this.composer.setSize(width, height);
+    this.composer?.setSize(width, height);
     this.updateCamera(true);
+  }
+
+  setRenderQuality(level) {
+    this.renderQuality = ['high', 'medium', 'low'].includes(level) ? level : 'medium';
+    this.effects.setQuality(this.renderQuality);
+    const shadows = this.renderQuality !== 'low';
+    this.sun.castShadow = shadows;
+    this.renderer.shadowMap.enabled = shadows;
+    const shadowSize = this.renderQuality === 'high' ? this.highShadowSize : 512;
+    if (this.sun.shadow.mapSize.x !== shadowSize) {
+      this.sun.shadow.map?.dispose();
+      this.sun.shadow.map = null;
+      this.sun.shadow.mapSize.set(shadowSize, shadowSize);
+    }
+    if (shadows) this.renderer.shadowMap.needsUpdate = true;
+    if (this.renderQuality === 'high' && !this.composer) {
+      this.composer = new EffectComposer(this.renderer);
+      this.composer.addPass(new RenderPass(this.scene, this.camera));
+      this.bloomPass = new UnrealBloomPass(new THREE.Vector2(256, 256), .34, .2, .9);
+      this.composer.addPass(this.bloomPass);
+      this.composer.addPass(new OutputPass());
+      this.composer.setPixelRatio(this.renderer.getPixelRatio());
+      this.composer.setSize(this.container.clientWidth || window.innerWidth,
+        this.container.clientHeight || window.innerHeight);
+    }
+  }
+
+  renderScene() {
+    if (this.renderQuality === 'high') this.composer.render();
+    else this.renderer.render(this.scene, this.camera);
   }
 
   updateCamera(immediate = false) {
@@ -457,12 +490,14 @@ export class GemGame {
     this.currentAmmoFractions = this.player.ammo.fractions(now);
     updateAmmoBar(this.ammoBar, this.currentAmmoFractions, toWorld(this.player.x, this.player.y), this.camera);
     this.ammoHudFills.forEach((fill, index) => {
-      fill.style.transform = `scaleX(${this.currentAmmoFractions[index]})`;
+      const transform = `scaleX(${Math.round(this.currentAmmoFractions[index] * 50) / 50})`;
+      if (fill.style.transform !== transform) fill.style.transform = transform;
     });
     const blocked = this.player.ammo.charges === 0 || !this.playerActor.active ||
       this.match.phase === 'finished' || this.wormhole.pulling;
     this.attackButton.classList.toggle('blocked', blocked);
-    this.attackButton.setAttribute('aria-disabled', String(blocked));
+    if (this.attackButton.getAttribute('aria-disabled') !== String(blocked))
+      this.attackButton.setAttribute('aria-disabled', String(blocked));
     this.controls.superMode = !this.playerActor.active || this.match.phase === 'finished' ||
       this.wormhole.pulling ? 'blocked' : this.characterId === 'kira'
       ? this.superReady() ? 'launch' : 'blocked'
@@ -472,9 +507,11 @@ export class GemGame {
     this.superButton.classList.toggle('ready', this.controls.superMode === 'launch');
     this.superButton.classList.toggle('enter', ['enter', 'exit'].includes(this.controls.superMode));
     this.superButton.classList.toggle('blocked', this.controls.superMode === 'blocked');
-    this.superButton.style.setProperty('--charge', `${this.superCharge()}%`);
-    this.superLabel.textContent = this.characterId === 'kira' ? 'SHEER'
-      : this.wormhole.inside ? 'SAIR' : this.wormhole.hole ? 'ENTRAR' : 'SUPER';
+    const charge = `${this.superCharge()}%`;
+    if (this.superButton.style.getPropertyValue('--charge') !== charge)
+      this.superButton.style.setProperty('--charge', charge);
+    setTextIfChanged(this.superLabel, this.characterId === 'kira' ? 'SHEER'
+      : this.wormhole.inside ? 'SAIR' : this.wormhole.hole ? 'ENTRAR' : 'SUPER');
 
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       const shot = this.projectiles[i];
@@ -579,7 +616,7 @@ export class GemGame {
     this.effects.update(seconds);
     this.updateFlyGems(now);
     this.updateShake(now);
-    this.composer.render();
+    this.renderScene();
     requestAnimationFrame(this.frame);
   }
 
@@ -847,12 +884,14 @@ export class GemGame {
     updateAmmoBar(this.ammoBar, this.currentAmmoFractions,
       toWorld(this.player.x, this.player.y), this.camera);
     this.ammoHudFills.forEach((fill, index) => {
-      fill.style.transform = `scaleX(${this.currentAmmoFractions[index] ?? 0})`;
+      const transform = `scaleX(${Math.round((this.currentAmmoFractions[index] ?? 0) * 50) / 50})`;
+      if (fill.style.transform !== transform) fill.style.transform = transform;
     });
     const blocked = !this.playerActor.active || this.player.ammo.charges === 0 ||
       this.match.phase === 'finished' || this.wormhole.pulling;
     this.attackButton.classList.toggle('blocked', blocked);
-    this.attackButton.setAttribute('aria-disabled', String(blocked));
+    if (this.attackButton.getAttribute('aria-disabled') !== String(blocked))
+      this.attackButton.setAttribute('aria-disabled', String(blocked));
     this.controls.superMode = !this.playerActor.active || this.match.phase === 'finished' ||
       this.wormhole.pulling ? 'blocked' : this.characterId === 'kira'
       ? this.superReady() ? 'launch' : 'blocked'
@@ -862,9 +901,11 @@ export class GemGame {
     this.superButton.classList.toggle('ready', this.controls.superMode === 'launch');
     this.superButton.classList.toggle('enter', ['enter', 'exit'].includes(this.controls.superMode));
     this.superButton.classList.toggle('blocked', this.controls.superMode === 'blocked');
-    this.superButton.style.setProperty('--charge', `${this.superCharge()}%`);
-    this.superLabel.textContent = this.characterId === 'kira' ? 'SHEER'
-      : this.wormhole.inside ? 'SAIR' : this.wormhole.hole ? 'ENTRAR' : 'SUPER';
+    const charge = `${this.superCharge()}%`;
+    if (this.superButton.style.getPropertyValue('--charge') !== charge)
+      this.superButton.style.setProperty('--charge', charge);
+    setTextIfChanged(this.superLabel, this.characterId === 'kira' ? 'SHEER'
+      : this.wormhole.inside ? 'SAIR' : this.wormhole.hole ? 'ENTRAR' : 'SUPER');
 
     this.player.heroRoot.visible = this.playerActor.active && !this.playerActor.inside;
     this.player.standRoot.visible = this.playerActor.active &&
@@ -896,7 +937,7 @@ export class GemGame {
     this.updateHud(now);
     this.effects.update(seconds);
     this.updateShake(now);
-    this.composer.render();
+    this.renderScene();
     requestAnimationFrame(this.frame);
   }
 
@@ -1274,18 +1315,19 @@ export class GemGame {
         this.pulseScore(team);
       }
     }
-    this.blueScore.textContent = `${scores.blue}/${GEM_RULES.targetGems}`;
-    this.redScore.textContent = `${scores.red}/${GEM_RULES.targetGems}`;
+    setTextIfChanged(this.blueScore, `${scores.blue}/${GEM_RULES.targetGems}`);
+    setTextIfChanged(this.redScore, `${scores.red}/${GEM_RULES.targetGems}`);
     const remaining = Math.max(0, this.match.startAt + GEM_RULES.matchTime - now);
     const totalSeconds = Math.ceil(remaining / 1000);
-    this.clock.textContent = this.match.phase === 'suddenDeath' ? 'MORTE SÚBITA'
-      : `${Math.floor(totalSeconds / 60)}:${String(totalSeconds % 60).padStart(2, '0')}`;
+    setTextIfChanged(this.clock, this.match.phase === 'suddenDeath' ? 'MORTE SÚBITA'
+      : `${Math.floor(totalSeconds / 60)}:${String(totalSeconds % 60).padStart(2, '0')}`);
     this.clock.classList.toggle('sudden', this.match.phase === 'suddenDeath');
-    this.healthHud.textContent = `VIDA ${this.playerActor.hp}/${this.playerActor.stats.health}`;
+    setTextIfChanged(this.healthHud, `VIDA ${this.playerActor.hp}/${this.playerActor.stats.health}`);
     const running = Object.entries(this.match.countdowns).filter(([, end]) => end !== null);
     if (running.length) {
       const [team, end] = running.sort((a, b) => a[1] - b[1])[0];
-      this.countdown.textContent = `${team === this.viewTeam ? 'SEU TIME' : 'INIMIGOS'} VENCEM EM ${Math.max(0, Math.ceil((end - now) / 1000))}`;
+      setTextIfChanged(this.countdown,
+        `${team === this.viewTeam ? 'SEU TIME' : 'INIMIGOS'} VENCEM EM ${Math.max(0, Math.ceil((end - now) / 1000))}`);
       this.countdown.hidden = false;
       this.countdown.classList.toggle('enemy', team !== this.viewTeam);
       this.countdown.classList.toggle('urgent', end - now <= 5000);

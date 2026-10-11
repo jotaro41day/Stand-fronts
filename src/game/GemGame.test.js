@@ -30,3 +30,23 @@ test('a Johnny shot creates visual recoil without requiring aim on the match act
     await vite.close();
   }
 });
+
+test('medium and low quality render the scene directly while high quality uses bloom', async () => {
+  const vite = await createTestServer();
+  try {
+    const { GemGame } = await vite.ssrLoadModule('/src/game/GemGame.js');
+    const game = Object.create(GemGame.prototype);
+    const calls = [];
+    game.renderer = { render: () => calls.push('direct') };
+    game.composer = { render: () => calls.push('bloom') };
+    game.scene = {};
+    game.camera = {};
+    for (const quality of ['medium', 'low', 'high']) {
+      game.renderQuality = quality;
+      game.renderScene();
+    }
+    assert.deepEqual(calls, ['direct', 'direct', 'bloom']);
+  } finally {
+    await vite.close();
+  }
+});
