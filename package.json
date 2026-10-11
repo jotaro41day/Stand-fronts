@@ -1,0 +1,27 @@
+{
+  "name": "stand-fronts",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "postinstall": "node scripts/patchCapacitorCli.mjs",
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build && node scripts/writePrecache.mjs",
+    "preview": "vite preview --host 0.0.0.0",
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "6.2.2",
+    "vite": "^7.1.0"
+  },
+  "dependencies": {
+    "@capacitor/android": "6.2.2",
+    "@capacitor/app": "6.0.3",
+    "@capacitor/core": "6.2.2",
+    "peerjs": "^1.5.5",
+    "three": "^0.186.1"
+  },
+  "overrides": {
+    "tar": "7.5.22"
+  }
+}

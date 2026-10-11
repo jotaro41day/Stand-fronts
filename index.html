@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#100e20" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" type="image/png" href="./icons/icon-192.png" />
+    <title>Stand Fronts 3D — Pique-Gema</title>
+  </head>
+  <body>
+    <div id="app">
+      <div id="game"></div>
+      <div class="character-select" id="character-select" role="dialog" aria-modal="true" aria-labelledby="select-title">
+        <div class="select-card"><small>PIQUE-GEMA</small><h1 id="select-title">ESCOLHA SEU PERSONAGEM</h1>
+          <div class="character-options">
+            <button type="button" data-character="johnny" class="selected" aria-pressed="true"><strong>JOHNNY</strong><span>TUSK ACT 3</span><em>Tiro rápido · buraco de minhoca</em></button>
+            <button type="button" data-character="kira" aria-pressed="false"><strong>KIRA YOSHIKAGE</strong><span>KILLER QUEEN</span><em>Bombas em área · Sheer Heart Attack</em></button>
+          </div>
+          <div class="mode-actions">
+            <button type="button" id="offline-play">JOGAR OFFLINE</button>
+            <button type="button" id="create-room">CRIAR SALA</button>
+          </div>
+          <div class="join-actions">
+            <input id="room-code" inputmode="text" maxlength="5" autocomplete="off" aria-label="Código da sala" placeholder="CÓDIGO" />
+            <select id="preferred-team" aria-label="Time desejado"><option value="blue">Time azul</option><option value="red">Time vermelho</option></select>
+            <button type="button" id="join-room">ENTRAR COM CÓDIGO</button>
+          </div>
+          <p class="room-status" id="menu-status" role="status" aria-live="polite"></p>
+        </div>
+      </div>
+      <div class="room-lobby" id="room-lobby" role="dialog" aria-modal="true" aria-labelledby="lobby-title" hidden>
+        <div class="lobby-card"><small>MULTIPLAYER P2P</small><h1 id="lobby-title">SALA <strong id="lobby-code">-----</strong></h1>
+          <p id="lobby-status">Aguardando jogadores…</p>
+          <div class="lobby-players" id="lobby-players"></div>
+          <div class="lobby-choices"><label>PERSONAGEM<select id="lobby-character"><option value="johnny">Johnny</option><option value="kira">Kira</option></select></label><label>TIME<select id="lobby-team"><option value="blue">Azul</option><option value="red">Vermelho</option></select></label></div>
+          <div class="lobby-actions"><button type="button" id="start-room" hidden>INICIAR PARTIDA</button><button type="button" id="leave-room">VOLTAR</button></div>
+        </div>
+      </div>
+      <header class="hud match-hud">
+        <div class="team-gems blue"><span>SEU TIME</span><strong id="blue-score">0/10</strong></div>
+        <div class="match-center"><strong id="match-clock">3:00</strong><small id="health">VIDA 3/3</small></div>
+        <div class="team-gems red"><span>INIMIGOS</span><strong id="red-score">0/10</strong></div>
+      </header>
+      <label class="quality-control" for="quality">EFEITOS
+        <select id="quality" aria-label="Qualidade dos efeitos"><option value="high">Alta</option><option value="medium" selected>Média</option><option value="low">Baixa</option></select>
+      </label>
+      <div class="countdown" id="countdown" aria-live="polite" hidden></div>
+      <div class="instructions" id="instructions"><span class="desktop-help">WASD / SETAS MOVE <b>·</b> MOUSE ATACA <b>·</b> SEGURE E PARA MIRAR O SUPER</span><span class="touch-help">JOYSTICK MOVE <b>·</b> ARRASTE ATAQUE OU SUPER PARA MIRAR <b>·</b> SOLTE PARA DISPARAR</span></div>
+      <div class="controls" aria-label="Controles de toque">
+        <div class="joystick" id="joystick" aria-label="Joystick de movimento"><div class="joystick-cross"></div><div class="joystick-knob" id="joystick-knob"></div></div>
+        <div class="attack-zone"><button type="button" class="super blocked" id="super" aria-label="Mirar e usar o super"><span class="super-knob" id="super-knob">✧</span><span class="super-label" id="super-label">SUPER</span></button><div class="attack-label">ATAQUE</div><div class="attack-control"><div class="ammo-hud" id="ammo-hud" aria-label="Munição"></div><button type="button" class="attack" id="attack" aria-label="Mirar e atacar"><span class="attack-knob" id="attack-knob">✦</span></button></div></div>
+      </div>
+      <div class="toast" id="toast" aria-live="polite">ACERTO!</div>
+      <div class="match-end" id="match-end" role="dialog" aria-labelledby="end-title" aria-modal="true" hidden>
+        <div class="end-card"><small>PIQUE-GEMA</small><h1 id="end-title">VITÓRIA</h1><button type="button" id="play-again">JOGAR DE NOVO</button></div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
